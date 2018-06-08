@@ -1,7 +1,7 @@
 local M = {}
 
 local function parseFilters(csvFilters)
-  filters = {}
+  local filters = {}
   if (not (csvFilters == nil)) then
     for pattern in string.gmatch(csvFilters, "[^,]+") do
       table.insert(filters, pattern)
@@ -60,8 +60,21 @@ function M.exit(httpStatusCode, message, ngxCode)
 end
 
 function M.injectUser(user)
-  ngx.ctx.authenticated_consumer = user
-  ngx.ctx.authenticated_consumer.id = user.sub
+  local tmp_user = user
+  tmp_user.id = user.sub
+  tmp_user.username = user.preferred_username
+  ngx.ctx.authenticated_consumer = tmp_user
+end
+
+function M.has_bearer_access_token()
+  local header =  ngx.req.get_headers()['Authorization']
+  if header and header:find(" ") then
+    local divider = header:find(' ')
+    if string.lower(header:sub(0, divider-1)) == string.lower("Bearer") then
+      return true
+    end
+  end
+  return false
 end
 
 return M

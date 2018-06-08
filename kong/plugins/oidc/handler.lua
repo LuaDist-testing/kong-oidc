@@ -1,89 +1,74 @@
--- Extending the Base Plugin handler is optional, as there is no real
--- concept of interface in Lua, but the Base Plugin handler's methods
--- can be called from your child implementation and will print logs
--- in your `error.log` file (where all logs are printed).
 local BasePlugin = require "kong.plugins.base_plugin"
-local CustomHandler = BasePlugin:extend()
+local OidcHandler = BasePlugin:extend()
 local utils = require("kong.plugins.oidc.utils")
 local filter = require("kong.plugins.oidc.filter")
 local session = require("kong.plugins.oidc.session")
 
-CustomHandler.PRIORITY = 1000
+local cjson = require("cjson")
 
--- Your plugin handler's constructor. If you are extending the
--- Base Plugin handler, it's only role is to instanciate itself
--- with a name. The name is your plugin name as it will be printed in the logs.
-function CustomHandler:new()
-  CustomHandler.super.new(self, "oidc")
+OidcHandler.PRIORITY = 1000
+
+
+function OidcHandler:new()
+  OidcHandler.super.new(self, "oidc")
 end
 
-function CustomHandler:access(config)
-  -- Eventually, execute the parent implementation
-  -- (will log that your plugin is entering this context)
-  CustomHandler.super.access(self)
-
+function OidcHandler:access(config)
+  OidcHandler.super.access(self)
   local oidcConfig = utils.get_options(config, ngx)
 
   if filter.shouldProcessRequest(oidcConfig) then
-    ngx.log(ngx.DEBUG, "In plugin CustomHandler:access calling authenticate, requested path: " .. ngx.var.request_uri)
-
     session.configure(config)
-
-    doAuthentication(oidcConfig)
-
+    handle(oidcConfig)
   else
-    ngx.log(ngx.DEBUG, "In plugin CustomHandler:access NOT calling authenticate, requested path: " .. ngx.var.request_uri)
+    ngx.log(ngx.DEBUG, "OidcHandler ignoring request, path: " .. ngx.var.request_uri)
   end
 
-  ngx.log(ngx.DEBUG, "In plugin CustomHandler:access Done")
+  ngx.log(ngx.DEBUG, "OidcHandler done")
 end
 
-function doAuthentication(oidcConfig)
-
-  res = tryIntrospect(oidcConfig)
-  if res then
-
-    ngx.log(ngx.DEBUG, "In plugin CustomHandler:Valid access token detected, passing connection, requested path: " .. ngx.var.request_uri)
-
-    utils.injectUser({sub = res.sub})
-
-  else
-
-    local res, err = require("resty.openidc").authenticate(oidcConfig)
-
-    if err then
-      if config.recovery_page_path then
-        ngx.log(ngx.DEBUG, "Entering recovery page: " .. config.recovery_page_path)
-        return ngx.redirect(config.recovery_page_path)
-      end
-      utils.exit(500, err, ngx.HTTP_INTERNAL_SERVER_ERROR)
+function handle(oidcConfig)
+  local response
+  if oidcConfig.introspection_endpoint then
+    response = introspect(oidcConfig)
+    if response then
+      utils.injectUser(response)
     end
-
-    if res and res.user then
-      utils.injectUser(res.user)
-      ngx.req.set_header("X-Userinfo", require("cjson").encode(res.user))
-    end
-
   end
 
+  if response == nil then
+    response = make_oidc(oidcConfig)
+    if response and response.user then
+      utils.injectUser(response.user)
+      ngx.req.set_header("X-Userinfo", cjson.encode(response.user))
+    end
+  end
 end
 
-function tryIntrospect(oidcConfig)
-  
-  -- If introspection endpoint is not set, the functionallity is considered as disabled
-  if not oidcConfig.introspection_endpoint then
-    return nil
-  end
-  
-  local res, err = require("resty.openidc").introspect(oidcConfig)
+function make_oidc(oidcConfig)
+  ngx.log(ngx.DEBUG, "OidcHandler calling authenticate, requested path: " .. ngx.var.request_uri)
+  local res, err = require("resty.openidc").authenticate(oidcConfig)
   if err then
-    return nil
+    if oidcConfig.recovery_page_path then
+      ngx.log(ngx.DEBUG, "Entering recovery page: " .. oidcConfig.recovery_page_path)
+      ngx.redirect(oidcConfig.recovery_page_path)
+    end
+    utils.exit(500, err, ngx.HTTP_INTERNAL_SERVER_ERROR)
   end
-
   return res
-
 end
 
--- This module needs to return the created table, so that Kong
--- can execute those functions.
-return CustomHandler
+function introspect(oidcConfig)
+  if utils.has_bearer_access_token() then
+    local res, err = require("resty.openidc").introspect(oidcConfig)
+    if err then
+      return nil
+    end
+    ngx.log(ngx.DEBUG, "OidcHandler introspect succeeded, requested path: " .. ngx.var.request_uri)
+    return res
+  end
+  return nil
+end
+
+
+return OidcHandler
