@@ -1,16 +1,16 @@
 -- This file was automatically generated for the LuaDist project.
 
 package = "kong-oidc"
-version = "1.0.2-0"
+version = "1.0.3-0"
 -- LuaDist source
 source = {
-  tag = "1.0.2-0",
+  tag = "1.0.3-0",
   url = "git://github.com/LuaDist-testing/kong-oidc.git"
 }
 -- Original source
 -- source = {
 --     url = "git://github.com/nokia/kong-oidc",
---     tag = "v1.0.2",
+--     tag = "v1.0.3",
 --     dir = "kong-oidc"
 -- }
 description = {
